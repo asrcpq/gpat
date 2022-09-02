@@ -9,6 +9,28 @@ fn main() {
 	} else {
 		panic!("Open fail {}", args[1])
 	};
+	let mut existing_patches = if !Path::new(&args[2]).exists() {
+		std::fs::create_dir(&args[2]).unwrap();
+		Vec::new()
+	} else {
+		std::fs::read_dir(&args[2]).unwrap()
+			.map(|x| {
+				let x = x.unwrap();
+				if !x.file_type()
+					.unwrap()
+					.is_file()
+				{
+					panic!("Dst contains invalid file {:?}", x);
+				}
+				let filename = x.file_name()
+					.into_string()
+					.expect(&format!("Dst contains non string file {:?}", x));
+				filename.split('.').next().unwrap().parse::<i64>().unwrap()
+			})
+			.collect()
+	};
+	existing_patches.sort_unstable();
+	let mut existing_patch_idx = 0;
 	let mut revwalk = repo.revwalk().unwrap();
 	let sort = git2::Sort::TIME | git2::Sort::REVERSE;
 	revwalk.set_sorting(sort).unwrap();
@@ -49,13 +71,17 @@ fn main() {
 		let time = commit.time().seconds();
 		let path_string = format!("{}/{}.patch", args[2], time);
 		let patch_path = Path::new(&path_string);
-		if patch_path.exists() {
+		if existing_patch_idx < existing_patches.len() {
+			if existing_patches[existing_patch_idx] != time {
+				panic!("Time mismatch {} vs {}", existing_patches[existing_patch_idx], time);
+			}
 			let b = std::fs::read(patch_path).unwrap();
 			if b == result {
 				eprintln!("DEBUG: Check commit {} Ok", commit.id());
 			} else {
 				panic!("Check failed! maybe dup timestamp?");
 			}
+			existing_patch_idx += 1;
 		} else {
 			std::fs::write(patch_path, &result).unwrap();
 			eprintln!("Write commit {}({} bytes) Ok", commit.id(), result.len());
