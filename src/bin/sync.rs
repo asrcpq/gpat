@@ -85,4 +85,7 @@ fn main() {
 			eprintln!("Write commit {}({} bytes) Ok", commit.id(), result.len());
 		}
 	}
+	if existing_patch_idx != existing_patches.len() {
+		panic!("Gpat directory is newer than git");
+	}
 }
