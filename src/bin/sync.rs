@@ -76,9 +76,7 @@ fn main() {
 				panic!("Time mismatch {} vs {}", existing_patches[existing_patch_idx], time);
 			}
 			let b = std::fs::read(patch_path).unwrap();
-			if b == result {
-				eprintln!("DEBUG: Check commit {} Ok", commit.id());
-			} else {
+			if b != result {
 				panic!("Check failed! maybe dup timestamp?");
 			}
 			existing_patch_idx += 1;
