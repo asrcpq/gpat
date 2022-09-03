@@ -8,7 +8,29 @@ fn get_revwalk(repo: &git2::Repository) -> git2::Revwalk {
 	revwalk
 }
 
-fn open_git_repo(path: &str, or_create: bool) -> git2::Repository {
+fn parent_check(repo: &git2::Repository) {
+	let mut revwalk = get_revwalk(repo);
+	let mut last_commit;
+	if let Some(rev) = revwalk.next() {
+		let commit = repo.find_commit(rev.unwrap()).unwrap();
+		assert_eq!(commit.parents().len(), 0);
+		last_commit = commit.id();
+	} else {
+		return
+	}
+	for rev in revwalk {
+		let commit = repo.find_commit(rev.unwrap()).unwrap();
+		let mut parents = commit.parent_ids();
+		if parents.len() != 1 {
+			panic!("parents != 1, merge point? {}", commit.id());
+		}
+		let id = parents.next().unwrap();
+		assert_eq!(id, last_commit);
+		last_commit = commit.id();
+	}
+}
+
+fn open_git_repo(path: &str) -> Option<git2::Repository> {
 	let path = Path::new(path);
 	if path.exists() {
 		if std::fs::read_dir(path).unwrap().next().is_some() {
@@ -19,25 +41,13 @@ fn open_git_repo(path: &str, or_create: bool) -> git2::Repository {
 			} else {
 				panic!("Open fail {:?}", path)
 			};
-			multi_parents_check(&repo);
-			return repo
+			if !repo.is_empty().unwrap() {
+				parent_check(&repo);
+			}
+			return Some(repo)
 		}
 	}
-	if !or_create {
-		panic!("Empty git folder");
-	}
-	git2::Repository::init_bare(path).unwrap()
-}
-
-fn multi_parents_check(repo: &git2::Repository) {
-	// TODO: check parent commid id
-	let revwalk = get_revwalk(repo);
-	for rev in revwalk {
-		let commit = repo.find_commit(rev.unwrap()).unwrap();
-		if commit.parents().len() >= 2 {
-			panic!("Contains merge point: {}", commit.id());
-		}
-	}
+	None
 }
 
 fn get_gpat_patch_list(dst: &str) -> Vec<i64> {
@@ -69,9 +79,12 @@ fn get_gpat_patch_list(dst: &str) -> Vec<i64> {
 }
 
 pub fn sync_git_to_gpat(src: &str, dst: &str) {
-	let repo = open_git_repo(src, false);
+	let repo = open_git_repo(src).unwrap();
 	let existing_patches = get_gpat_patch_list(dst);
 	let mut existing_patch_idx = 0;
+	if repo.is_empty().unwrap() {
+		panic!("Git repo is empty");
+	}
 	let revwalk = get_revwalk(&repo);
 	let mut prev_tree = None;
 	let mut diff_options = git2::DiffOptions::new();
@@ -121,9 +134,21 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 
 pub fn sync_gpat_to_git(src: &str, dst: &str) {
 	let patch_list = get_gpat_patch_list(src);
-	let repo = open_git_repo(dst, true);
+	let (repo, created) = if let Some(repo) = open_git_repo(dst) {
+		eprintln!("Existing repo found");
+		(repo, false)
+	} else {
+		let repo = git2::Repository::init_bare(dst).unwrap();
+		eprintln!("Create new repo");
+		(repo, true)
+	};
+	let revwalk = if created || repo.is_empty().unwrap() {
+		None
+	} else {
+		Some(get_revwalk(&repo))
+	};
+	let mut revwalk = revwalk.into_iter().flatten();
 	let mut last_commit_oid = None;
-	let mut revwalk = get_revwalk(&repo);
 	for epoch in patch_list.into_iter() {
 		if let Some(rev) = revwalk.next() {
 			let rev = rev.unwrap();
