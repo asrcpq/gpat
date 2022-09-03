@@ -1,3 +1,3 @@
-change: single sync binary
+change: gpat2git now does incremental sync
 
-todo: incremental sync from gpat to git
+todo: solve todo notes in code

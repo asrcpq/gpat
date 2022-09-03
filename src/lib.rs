@@ -1,14 +1,47 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-pub fn sync_git_to_gpat(src: &str, dst: &str) {
-	let repo = if let Ok(repo) = git2::Repository::open(src) {
-		repo
-	} else if let Ok(repo) = git2::Repository::open_bare(src) {
-		repo
-	} else {
-		panic!("Open fail {}", src)
-	};
-	let mut existing_patches = if !Path::new(dst).exists() {
+fn get_revwalk(repo: &git2::Repository) -> git2::Revwalk {
+	let mut revwalk = repo.revwalk().unwrap();
+	let sort = git2::Sort::TIME | git2::Sort::REVERSE;
+	revwalk.set_sorting(sort).unwrap();
+	revwalk.push_head().unwrap();
+	revwalk
+}
+
+fn open_git_repo(path: &str, or_create: bool) -> git2::Repository {
+	let path = Path::new(path);
+	if path.exists() {
+		if std::fs::read_dir(path).unwrap().next().is_some() {
+			let repo = if let Ok(repo) = git2::Repository::open(path) {
+				repo
+			} else if let Ok(repo) = git2::Repository::open_bare(path) {
+				repo
+			} else {
+				panic!("Open fail {:?}", path)
+			};
+			multi_parents_check(&repo);
+			return repo
+		}
+	}
+	if !or_create {
+		panic!("Empty git folder");
+	}
+	git2::Repository::init_bare(path).unwrap()
+}
+
+fn multi_parents_check(repo: &git2::Repository) {
+	// TODO: check parent commid id
+	let revwalk = get_revwalk(repo);
+	for rev in revwalk {
+		let commit = repo.find_commit(rev.unwrap()).unwrap();
+		if commit.parents().len() >= 2 {
+			panic!("Contains merge point: {}", commit.id());
+		}
+	}
+}
+
+fn get_gpat_patch_list(dst: &str) -> Vec<i64> {
+	let mut patch_list = if !Path::new(dst).exists() {
 		std::fs::create_dir(dst).unwrap();
 		Vec::new()
 	} else {
@@ -24,25 +57,22 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 				let filename = x.file_name()
 					.into_string()
 					.expect(&format!("Dst contains non string file {:?}", x));
-				filename.split('.').next().unwrap().parse::<i64>().unwrap()
+				let mut name_split_iter = filename.split('.');
+				let id = name_split_iter.next().unwrap().parse::<i64>().unwrap();
+				assert_eq!(name_split_iter.next().unwrap(), "patch");
+				id
 			})
 			.collect()
 	};
-	existing_patches.sort_unstable();
+	patch_list.sort_unstable();
+	patch_list
+}
+
+pub fn sync_git_to_gpat(src: &str, dst: &str) {
+	let repo = open_git_repo(src, false);
+	let existing_patches = get_gpat_patch_list(dst);
 	let mut existing_patch_idx = 0;
-	let mut revwalk = repo.revwalk().unwrap();
-	let sort = git2::Sort::TIME | git2::Sort::REVERSE;
-	revwalk.set_sorting(sort).unwrap();
-	revwalk.push_head().unwrap();
-	for rev in revwalk {
-		let commit = repo.find_commit(rev.unwrap()).unwrap();
-		if commit.parents().len() >= 2 {
-			panic!("Contains merge point: {}", commit.id());
-		}
-	}
-	let mut revwalk = repo.revwalk().unwrap();
-	revwalk.set_sorting(sort).unwrap();
-	revwalk.push_head().unwrap();
+	let revwalk = get_revwalk(&repo);
 	let mut prev_tree = None;
 	let mut diff_options = git2::DiffOptions::new();
 	diff_options.show_binary(true);
@@ -89,51 +119,26 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 	}
 }
 
-fn check_ext(path: &Path) -> bool {
-	let ext = if let Some(x) = path.extension() {
-		x
-	} else {
-		return false
-	};
-	ext.to_str() == Some("patch")
-}
-
 pub fn sync_gpat_to_git(src: &str, dst: &str) {
-	let mut paths: Vec<(i64, PathBuf)> = Vec::new();
-	for entry in std::fs::read_dir(src).unwrap() {
-		let entry = entry.unwrap();
-		let path = entry.path();
-		if !check_ext(&path) {
-			eprintln!("invalid file {:?}", path);
-			continue
-		}
-		let filename = if let Ok(s) = entry.file_name().into_string() {
-			s
-		} else {
-			eprintln!("Filename not string {:?}", path);
-			continue
-		};
-		let mut iter = filename.split('.');
-		let t = if let Ok(t) = iter.next().unwrap().parse::<i64>() {
-			t
-		} else {
-			eprintln!("Filename not epoch {:?}", path);
-			continue
-		};
-		paths.push((t, path.into()));
-	}
-	paths.sort_unstable();
-	let dst_path = Path::new(dst);
-	if dst_path.exists() {
-		if std::fs::read_dir(dst_path).unwrap().next().is_some() {
-			panic!("Dst non-empty");
-		}
-	}
-	let repo = git2::Repository::init_bare(dst_path).unwrap();
+	let patch_list = get_gpat_patch_list(src);
+	let repo = open_git_repo(dst, true);
 	let mut last_commit_oid = None;
-	for (epoch, path) in paths.into_iter() {
+	let mut revwalk = get_revwalk(&repo);
+	for epoch in patch_list.into_iter() {
+		if let Some(rev) = revwalk.next() {
+			let rev = rev.unwrap();
+			let commit = repo.find_commit(rev).unwrap();
+			if commit.time().seconds() == epoch {
+				// TODO: strict content check
+				eprintln!("epoch match, continue");
+				continue
+			} else {
+				panic!("ecoch mismatch: commit {}", commit.id());
+			}
+		}
+
 		let sig = git2::Signature::new("idfc", "idfc", &git2::Time::new(epoch, 0)).unwrap();
-		let buffer = std::fs::read(path).unwrap();
+		let buffer = std::fs::read(&format!("{}/{}.patch", src, epoch)).unwrap();
 		let diff = git2::Diff::from_buffer(&buffer).unwrap();
 		repo.apply(&diff, git2::ApplyLocation::Index, None).unwrap();
 		let tree_oid = repo.index().unwrap().write_tree().unwrap();
@@ -161,6 +166,10 @@ pub fn sync_gpat_to_git(src: &str, dst: &str) {
 		last_commit_oid = Some(commit_oid);
 		eprintln!("Commit {:?}", commit_oid);
 	}
-	let commit = repo.find_commit(last_commit_oid.unwrap()).unwrap();
-	repo.branch("master", &commit, false).unwrap();
+	if let Some(commit_oid) = last_commit_oid {
+		let commit = repo.find_commit(commit_oid).unwrap();
+		repo.branch("master", &commit, false).unwrap();
+	} else {
+		eprintln!("Not updated");
+	}
 }
