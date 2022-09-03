@@ -1,3 +1,3 @@
-change: gpat2git now does incremental sync
+change: update readme
 
 todo: solve todo notes in code
