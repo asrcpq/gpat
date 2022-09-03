@@ -1,4 +1,4 @@
-# git to patches
+# gpat
 
 Convert and sync linear git repository to patches(and back).
 
