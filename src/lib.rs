@@ -79,6 +79,8 @@ fn get_gpat_patch_list(dst: &str) -> Vec<i64> {
 }
 
 pub fn sync_git_to_gpat(src: &str, dst: &str) {
+	let mut commit_count = 0;
+
 	let repo = open_git_repo(src).unwrap();
 	let existing_patches = get_gpat_patch_list(dst);
 	let mut existing_patch_idx = 0;
@@ -124,22 +126,27 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 			existing_patch_idx += 1;
 		} else {
 			std::fs::write(patch_path, &result).unwrap();
-			eprintln!("Write commit {}({} bytes) Ok", commit.id(), result.len());
+			log::debug!("Write commit {}({} bytes) Ok", commit.id(), result.len());
+			commit_count += 1;
 		}
 	}
 	if existing_patch_idx != existing_patches.len() {
 		panic!("Gpat directory is newer than git");
 	}
+	log::info!("Summary: existing {}, commit {}", existing_patches.len(), commit_count);
 }
 
 pub fn sync_gpat_to_git(src: &str, dst: &str) {
+	// skip, commit
+	let mut count = [0usize; 2];
+
 	let patch_list = get_gpat_patch_list(src);
 	let (repo, created) = if let Some(repo) = open_git_repo(dst) {
-		eprintln!("Existing repo found");
+		log::info!("Existing repo found");
 		(repo, false)
 	} else {
 		let repo = git2::Repository::init_bare(dst).unwrap();
-		eprintln!("Create new repo");
+		log::info!("Create new repo");
 		(repo, true)
 	};
 	let revwalk = if created || repo.is_empty().unwrap() {
@@ -155,7 +162,8 @@ pub fn sync_gpat_to_git(src: &str, dst: &str) {
 			let commit = repo.find_commit(rev).unwrap();
 			if commit.time().seconds() == epoch {
 				// TODO: strict content check
-				eprintln!("epoch match, continue");
+				log::debug!("epoch match, continue");
+				count[0] += 1;
 				continue
 			} else {
 				panic!("ecoch mismatch: commit {}", commit.id());
@@ -189,12 +197,18 @@ pub fn sync_gpat_to_git(src: &str, dst: &str) {
 			).unwrap()
 		};
 		last_commit_oid = Some(commit_oid);
-		eprintln!("Commit {:?}", commit_oid);
+		count[1] += 1;
+		log::debug!("Commit {:?}", commit_oid);
+	}
+	if revwalk.next().is_some() {
+		panic!("Git repo is newer than gpat");
 	}
 	if let Some(commit_oid) = last_commit_oid {
 		let commit = repo.find_commit(commit_oid).unwrap();
 		repo.branch("master", &commit, false).unwrap();
+		log::info!("Marked master")
 	} else {
-		eprintln!("Not updated");
+		log::info!("Not updated");
 	}
+	log::info!("Summary: skip {}, commit {}", count[0], count[1]);
 }

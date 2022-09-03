@@ -1,3 +1,3 @@
-change: check parent count, fixed empty repo bug
+change: add logger
 
 todo: solve todo notes in code
