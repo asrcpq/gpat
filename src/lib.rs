@@ -133,7 +133,12 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 	if existing_patch_idx != existing_patches.len() {
 		panic!("Gpat directory is newer than git");
 	}
-	log::info!("Summary: existing {}, commit {}", existing_patches.len(), commit_count);
+	let summary = format!("Summary: existing {}, commit {}", existing_patches.len(), commit_count);
+	if commit_count == 0 {
+		log::debug!("{}", summary);
+	} else {
+		log::info!("{}", summary);
+	}
 }
 
 pub fn sync_gpat_to_git(src: &str, dst: &str) {
