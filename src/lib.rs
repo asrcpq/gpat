@@ -91,6 +91,7 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 	let mut prev_tree = None;
 	let mut diff_options = git2::DiffOptions::new();
 	diff_options.show_binary(true);
+	// diff_options.patience(true);
 	for rev in revwalk {
 		let rev = rev.unwrap();
 		let commit = repo.find_commit(rev).unwrap();
