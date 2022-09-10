@@ -120,10 +120,11 @@ pub fn sync_git_to_gpat(src: &str, dst: &str) {
 			if existing_patches[existing_patch_idx] != time {
 				panic!("Time mismatch {} vs {}", existing_patches[existing_patch_idx], time);
 			}
-			let b = std::fs::read(patch_path).unwrap();
-			if b != result {
-				panic!("Check failed! maybe dup timestamp?");
-			}
+			// TODO: strict content check
+			// let b = std::fs::read(patch_path).unwrap();
+			// if b != result {
+			// 	panic!("Check failed! maybe dup timestamp?");
+			// }
 			existing_patch_idx += 1;
 		} else {
 			std::fs::write(patch_path, &result).unwrap();
